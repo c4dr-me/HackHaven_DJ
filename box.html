@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>QR Mirror</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      font-family: sans-serif;
+    }
+
+    #qr-container {
+      width: 100vw;
+      height:100vw;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f0f0f0;
+    }
+
+    #qr-output {
+      width: 100vw;
+      height: 100vw;
+    }
+
+    #camera-container {
+      flex: 1;
+    }
+
+    #reader {
+      width: 100vw;
+      height: calc(100vh - 100vw);
+    }
+    #reader>video{
+      width:100vw;
+      height:calc(100vh - 100vw);
+      transform:scaleX(-1);
+    }
+    body[class] #camera-container>#reader{
+      display:none;
+    }
+    body.yellow #qr-container img{
+      display:none;
+    }
+    body.yellow #camera-container{
+      background-color:yellow;
+    }
+    body.yellow #camera-container:before{
+      content:"Processing...";
+    }
+    body.red #camera-container{
+      background-color:red;
+    }
+    body.green #camera-container:before{
+      content:"Transaction Failed!";
+    }
+    body.green #camera-container{
+      background-color:green;
+    }
+    body.green #camera-container:before{
+      content:"Transaction Successfull!";
+    }
+    body #camera-container{
+      line-height: calc(100vh - 100vw);
+      text-align:center;
+      font-size:4em;
+    }
+
+  </style>
+
+  <!-- html5-qrcode scanner -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <script src="./announce.js"></script>
+  <!-- qrcode generator -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
+</head>
+<body>
+
+  <div id="qr-container">
+    <img id="qr-output" src="" />
+  </div>
+  <div id="camera-container">
+    <div id="reader"></div>
+  </div>
+
+  <script>
+    const map = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', ' ']
+
+const tc = 10000;
+
+const index = {
+ username : {
+  from : 0,
+  to : 36
+ },
+ name : {
+  from : 10,
+  to : 37
+ }
+}
+
+const encode = (() => {
+ function number(num, size) {
+  let str = "";
+  num = BigInt(num)
+  while (size > 0) {
+   str = String.fromCharCode(Number(num%BigInt(256))) + str;
+   num /= BigInt(256);
+   --size;
+  }
+  return str;
+ }
+
+ function base16ToBase256(base16String) {
+  // Ensure the input is valid
+  if (base16String.length % 2 !== 0) {
+    throw new Error("Invalid base-16 string. Length must be even.");
+  }
+
+  const base256Array = [];
+  for (let i = 0; i < base16String.length; i += 2) {
+    const byte = parseInt(base16String.substr(i, 2), 16);
+    base256Array.push(byte);
+  }
+
+  return String.fromCharCode(...base256Array);
+}
+ 
+ function makeIndexArray(str,limits,size){
+  let {from,to} = limits
+  let arr = map.slice(from,to);
+  let n = BigInt(arr.length);
+  let n1 = n + BigInt(1);
+  let num = BigInt(0);
+  for(let ch of str){
+   num *= n1;
+   num += n-BigInt(arr.indexOf(ch));
+  }
+  return number(num, size);
+ }
+ 
+ 
+ 
+ return {
+  username: (str) => {
+   return makeIndexArray(str,index.username,10)
+  },
+  amount: (amt) => {
+   return number(amt, 3);
+  },
+  time: (t) => {
+    return number(t%tc, 2);
+  },
+  trans_id: (id) => {
+    return number(id, 4);
+  },
+  name: (str) => {
+    return makeIndexArray(str,index.name,37)
+  },
+  code: (amt) => {
+   return number(amt, 1);
+  },
+  hash: (base16String) => {
+      return base16ToBase256(base16String);
+  },
+ };
+})();
+
+const decode = (() => {
+ 
+ function number(str) {
+  let num = BigInt(0);
+  for (let i = 0; i < str.length; i++) {
+    num *= BigInt(256);
+    num += BigInt(str[i].charCodeAt(0));
+  }
+  return num;
+ }
+
+ function makeStr(arr,limits){
+  let {from,to} = limits
+  let ARR = map.slice(from,to);
+  
+  let n = BigInt(ARR.length);
+  let n1 = n + BigInt(1);
+  let num = number(arr);
+  let str = "";
+  while(num!=0){
+   str += ARR[n-num%n1];
+   num /= n1;
+  }
+  return str;
+ }
+
+ return {
+  ...Object.fromEntries(['username', 'receiver', 'sender'].map(k => [k, (arr) => {
+    let str = "";
+   try {
+     str = makeStr(arr,index.username).split('').reverse().join('');
+     
+    }catch(err){
+     console.error(err.message)
+     return false;
+    }
+    if (str.length < 8 || str.length > 15) { return false; }
+    if (!/^[a-z]/.test(str)) { return false; }
+    if (!/^[a-z0-9]+$/.test(str)) { return false; }
+    
+    return str;
+   }])),
+  amount: (arr) => {
+   let ret = Number(number(arr));
+   return ret==0 ? false : ret;
+  },
+  time: (arr) => {
+    let ret = Math.floor(Date.now()/tc)*tc+Number(number(arr));
+    console.log(ret);
+    if(ret>Date.now()){
+     ret -= tc;
+    }
+    return ret;
+  },
+  trans_id: (arr) => {
+   let ret = number(arr);
+   return ret==0 ? false : ret;
+  },
+  name: (arr) => {
+    let str = "";
+   try{
+    str = makeStr(arr,index.name).split('').reverse().join('');
+    
+   }catch(err){
+    console.error(err.message)
+    return false;
+   }
+   if (str.length < 1 || str.length > 60) { return false; }
+   if (str !== str.trim()) { return false; }
+   if (!/^[a-z\s]+$/.test(str)) { return false; }
+   
+   return str;
+   },
+   code: (arr) => {
+    return number(arr);
+   },
+  ...Object.fromEntries(['hash', 'details_hash', 'verification_hash'].map(k => [k, (base256String) => {
+    let base16String = '';
+    
+    // Convert each byte of the base 256 string to its hexadecimal representation
+    for (let i = 0; i < base256String.length; i++) {
+      const byte = base256String.charCodeAt(i);
+      base16String += byte.toString(16).padStart(2, '0'); // Ensure each byte is two digits
+    }
+
+    return base16String;
+  }]))
+ }
+})();
+
+/*
+```
+Username 10 (26+10+1)^15
+Amount    3 10^7
+Time      2 10^4
+Trans_ID   4 
+Name     37 (26+1+1)^60
+Hash     32
+```
+*/
+
+//comment
+
+
+const lengths = {
+ ...Object.fromEntries(['username', 'receiver', 'sender'].map(k => [k, 10])),
+ "amount" : 3,
+ "time" : 2,
+ "trans_id" : 4,
+ "name" : 37,
+ "code" : 1,
+ ...Object.fromEntries(['hash', 'details_hash', 'verification_hash'].map(k => [k, 32]))
+}
+
+const QR = {
+  encode : function(encodeFormat, ...values){
+    encodeFormat = encodeFormat.split('+');
+    if(encodeFormat.length!==values.length){ throw "MisMatched Parameters"; }
+    let str = "";
+    for(let i=0;i<encodeFormat.length;++i){
+     str += encode[encodeFormat[i]](values[i]);
+    }
+    console.log("ENCODED",values,encodeFormat,str);
+    return str;
+  },
+  decode : function(decodeFormat,decodeString){
+    decodeFormat = decodeFormat.split('+');
+    let n = 0;
+    for(let i=0;i<decodeFormat.length;++i){
+     n += lengths[decodeFormat[i]];
+    }
+    if(n!=decodeString.length){return false;}
+    let ret = {};
+    let k = 0;
+    for(let i=0;i<decodeFormat.length;++i){
+      let j = k + lengths[decodeFormat[i]];
+      let o = decode[decodeFormat[i]](decodeString.slice(k,j));
+      if(o===false){return false;}
+      ret[decodeFormat[i]] = o;
+      k = j;
+    }
+    console.log("DECODED",decodeString,decodeFormat,ret);
+    return ret;
+  }
+};
+    
+    const qrOutput = document.getElementById('qr-output');
+    let username = "receiver";//prompt("Enter Username : ");
+    let name = "merchant";//prompt("Enter Name : ");
+    let looking = true;
+
+    function generateQR(text) {
+      const typeNumber = 0;
+      const errorCorrectionLevel = 'H';
+      const qr = qrcode(typeNumber, errorCorrectionLevel);
+      qr.addData(text);
+      qr.make();
+      const imgTagString = qr.createImgTag(10);
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = imgTagString;
+      const img = tempDiv.querySelector('img');
+      qrOutput.src = img.src;
+    }
+    let str = QR.encode("username+name",username,name);
+    console.log(str);
+    console.log(str.length);
+    generateQR(str);
+
+    function resetEver(){
+      document.querySelector('#camera-container').removeEventListener('click', resetEver);
+      generateQR(QR.encode("username+name",username,name));
+      document.body.removeAttribute("class");
+      looking = true;
+    }
+    //make soundBox.php
+    //handleInfo
+    function onScanSuccess(decodedText) {
+      if(looking){
+        let ret = QR.decode("sender+amount+time+details_hash");
+        if(ret!=false){
+          looking = false;
+          document.body.setAttribute("class","yellow");
+          //send Request
+          fetch("./api/soundBox.php" + "?" + new Date().getTime().toString(), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({...ret,"username":username}),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.code === 0) {
+                let id = data.id;
+                let verification_hash = data.verification_hash;
+                generateQR(QR.encode("trans_id+verification_hash",id,verification_hash));
+                announce(ret.amount);
+                document.body.setAttribute("green");
+              }else{
+                document.body.setAttribute("red");
+                if(data.code===30){
+                  generateQR(QR.encode("code+verification_hash",30,verification_hash));
+                }else{
+                  generateQR(QR.encode("code",1));
+                }
+              }
+              document.querySelector('#camera-container').addEventListener('click', resetEver);
+            })
+            .catch((error) => {
+              console.error("AJAX Error:", error);
+            });
+        }
+      }
+      
+    }
+
+    const html5QrCode = new Html5Qrcode("reader");
+    Html5Qrcode.getCameras().then(devices => {
+      if (devices && devices.length) {
+        html5QrCode.start(
+          { facingMode: "user" },
+          {
+            fps: 10
+          },
+          onScanSuccess
+        ).catch(err => console.error("Start failed", err));
+      }
+    }).catch(err => console.error("Camera error", err));
+  </script>
+</body>
+</html>
